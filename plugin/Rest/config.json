@@ -1,0 +1,16 @@
+{
+	"name": "Rest",
+	"triggerwords":["测试"],
+	"IsEnable": true,
+	"IsSystem": true,
+	"AutoLoader": true,
+	"icon":"1",
+	"displayName": "REST服务器",
+	"description": "REST服务器, 录音接口和播报接口",
+	"version": "0.0.1",
+	"updateTime":"2020-10-22 23:25:00",
+    "repository": {
+		"type": "git",
+		"url": "https://gitee.com/kxdev/meadlai.git"
+	}
+}
