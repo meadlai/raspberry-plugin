@@ -15,6 +15,7 @@ from MsgProcess import MsgProcess, MsgType
 from urllib import parse
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
+
 class RequestHandler(BaseHTTPRequestHandler):
 
     STATIC_RETURN_SUCCESS = {"code": 0, "message": "success"}
@@ -36,7 +37,6 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        global result
         url_obj = parse.urlparse(self.path)
         logging.warning("do_GET: %s " % url_obj.path)
 
@@ -69,11 +69,11 @@ class RequestHandler(BaseHTTPRequestHandler):
                 return
 
 
-result = None
-result_available = threading.Event()
-
 class Rest(MsgProcess):
-    test = "test_string"
+
+    test = "test"
+    result_available = threading.Event()
+    result = ""
 
     def __init__(self, msgQueue):
         super().__init__(msgQueue)
@@ -97,9 +97,6 @@ class Rest(MsgProcess):
         self.send(MsgType.Text, Receiver='SpeechSynthesis', Data=message)
 
     def listen(self, seconds):
-        global result
-        result = None
-
         logging.warning("## :Rest.Listen ## ")
         if not seconds:
             logging.info("record time not set")
@@ -107,22 +104,22 @@ class Rest(MsgProcess):
             logging.warning("record time set to: %s", seconds)
 
         self.send(MsgType=MsgType.Start, Receiver='Record', Data=seconds)
-        logging.warning("waiting here")
+        time.sleep(10)
+        logging.warning("waiting here %s", self.test)
         # wait the callback from recognize engine to return the text
-        Rest.result_available.wait()
-        logging.warning("## wake here#1")
+        self.result_available.wait()
+        logging.warning("## wake here#1 %s", self.test)
 
     def Text(self, message):
-        global result
         logging.warning("### WebServer Text ###")
         ''' callback from recording and returning result '''
         text = message['Data']
         if not text:
             logging.warning("## NO text returned")
             return
-        result = text
-        logging.warning("### return text is %s", result)
-        Rest.result_available.set()
+        self.result = text
+        logging.warning("### return text is %s", self.result)
+        self.result_available.set()
         logging.warning("### thread event set: %s", self.test)
         self.test = "new value"
         logging.warning("### thread event set: %s", self.test)
