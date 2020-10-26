@@ -9,18 +9,22 @@ import os
 import logging
 import threading
 import json
-import time
+import urllib.request
 
 from MsgProcess import MsgProcess, MsgType
 from urllib import parse
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from socketserver import ThreadingMixIn
 
 
 class RequestHandler(BaseHTTPRequestHandler):
 
+    STATIC_SIGNAL_EVENT = threading.Event()
+    STATIC_LISTEN_RESULT_TEXT = ""
     STATIC_RETURN_SUCCESS = {"code": 0, "message": "success"}
     STATIC_RETURN_ERROR = {"code": 1, "message": "failed"}
     STATIC_RECORDING_SECONDS = 8
+    STATIC_TEXT_ENCODING = 'utf-8'
 
     def __init__(self, prt, *args):
         self.parent = prt
@@ -49,36 +53,48 @@ class RequestHandler(BaseHTTPRequestHandler):
             message = url_obj.query
             self.parent.speak(message)
             self._set_headers_200()
-            self.wfile.write(json.dumps(RequestHandler.STATIC_RETURN_SUCCESS).encode())
+            self.wfile.write(json.dumps(RequestHandler.STATIC_RETURN_SUCCESS).encode(RequestHandler.STATIC_TEXT_ENCODING))
             return
-        else:
+
+        if "listen" in url_obj.path:
             seconds = RequestHandler.STATIC_RECORDING_SECONDS
             if url_obj.query and url_obj.query.isdigit():
                 seconds = int(url_obj.query)
-            if seconds > 30:
+            if seconds >= 30:
                 seconds = 30
             self.parent.listen(seconds)
-            logging.warning("## wake here#2")
-            if not result:
-                self._set_headers_200()
-                self.wfile.write(json.dumps(RequestHandler.STATIC_RETURN_ERROR).encode())
-                return
-            else:
-                self._set_headers_200()
-                self.wfile.write(json.dumps({"code": 0, "message": self.parent.result}).encode())
-                return
+            logging.warning("## :HTTP Thread waiting...")
+            RequestHandler.STATIC_SIGNAL_EVENT.wait(seconds*2)
+            logging.warning("## :HTTP Thread awake...")
+            RequestHandler.STATIC_SIGNAL_EVENT.clear()
+            self._set_headers_200()
+            self.wfile.write(json.dumps({"code": 0, "message": urllib.parse.unquote(RequestHandler.STATIC_LISTEN_RESULT_TEXT)}, ensure_ascii=False).encode(RequestHandler.STATIC_TEXT_ENCODING))
+            return
 
+        # for recording plugin to call
+        if "callback" in url_obj.path:
+            # set global shared variable with result
+            RequestHandler.STATIC_LISTEN_RESULT_TEXT = url_obj.query
+            logging.warning("## :callback invoke...")
+            RequestHandler.STATIC_SIGNAL_EVENT.set()
+            self._set_headers_200()
+            self.wfile.write(json.dumps(RequestHandler.STATIC_RETURN_SUCCESS).encode(RequestHandler.STATIC_TEXT_ENCODING))
+            return
+
+
+
+
+
+class ThreadingSimpleServer(ThreadingMixIn, HTTPServer):
+    pass
 
 class Rest(MsgProcess):
-
-    test = "test"
-    result_available = threading.Event()
-    result = ""
 
     def __init__(self, msgQueue):
         super().__init__(msgQueue)
         logging.warning("## Rest starting ###")
         thread = threading.Thread(target=self._start_http_server)
+        thread.daemon = False
         thread.start()
         logging.warning("## thread starting ###")
 
@@ -89,7 +105,7 @@ class Rest(MsgProcess):
         ##
         logging.warning("## Rest _startHTTPServer ###")
         server_address = ('0.0.0.0', 9090)
-        server = HTTPServer(server_address, handler_wrapper)
+        server = ThreadingSimpleServer(server_address, handler_wrapper)
         server.serve_forever()
 
     def speak(self, message):
@@ -102,26 +118,21 @@ class Rest(MsgProcess):
             logging.info("record time not set")
             seconds = Rest.STATIC_RECORDING_TIME
             logging.warning("record time set to: %s", seconds)
-
         self.send(MsgType=MsgType.Start, Receiver='Record', Data=seconds)
-        time.sleep(10)
-        logging.warning("waiting here %s", self.test)
-        # wait the callback from recognize engine to return the text
-        self.result_available.wait()
-        logging.warning("## wake here#1 %s", self.test)
+        logging.warning("## :Record starting")
+        return
 
     def Text(self, message):
-        logging.warning("### WebServer Text ###")
+        logging.warning("### Text ###")
         ''' callback from recording and returning result '''
         text = message['Data']
         if not text:
             logging.warning("## NO text returned")
-            return
-        self.result = text
-        logging.warning("### return text is %s", self.result)
-        self.result_available.set()
-        logging.warning("### thread event set: %s", self.test)
-        self.test = "new value"
-        logging.warning("### thread event set: %s", self.test)
-
+            text = ""
+        logging.warning("### return text is %s", text)
+        url = 'http://localhost:9090/callback?'+urllib.parse.quote(text)
+        logging.warning("## .url = %s", url)
+        request = urllib.request.Request(url)
+        result = urllib.request.urlopen(request).read()
+        logging.info("## .Recording recognize callback done: %s ", result)
 
